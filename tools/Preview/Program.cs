@@ -13,7 +13,7 @@ internal static unsafe class Program
 {
     private sealed record PreviewCase(string Name, int Width, int Height, float Scale = 1,
         bool Weekly = false, bool LoggedIn = true, bool KnownCurrency = true,
-        bool ExpandedGoal = false, bool Folded = false);
+        bool ExpandedGoal = false, bool Folded = false, bool ObservedRewards = false, bool EvidenceTooltip = false);
 
     private static void Main(string[] args)
     {
@@ -30,6 +30,9 @@ internal static unsafe class Program
             new("minimum-scale150", 520, 580, 1.5f, Weekly: true, KnownCurrency: false),
             new("goal-expanded", 580, 600, ExpandedGoal: true),
             new("header-folded", 580, 600, Folded: true),
+            new("weekly-observed", 580, 600, Weekly: true, KnownCurrency: false, ObservedRewards: true),
+            new("weekly-observed-scale150", 520, 580, 1.5f, Weekly: true, KnownCurrency: false, ObservedRewards: true),
+            new("weekly-evidence", 580, 600, Weekly: true, KnownCurrency: false, ObservedRewards: true, EvidenceTooltip: true),
         ];
         foreach (var preview in cases) Render(preview, output);
         Console.WriteLine($"Rendered {cases.Length} production ImGui views using synthetic character fixtures.");
@@ -77,7 +80,13 @@ internal static unsafe class Program
 
             var config = new Configuration { Preferences = new Preferences { SessionMinutes = 60 } };
             var saves = 0;
-            var window = new MainWindow(config, new ProgressStore(), () => saves++) { RequestWeekly = preview.Weekly, IsOpen = true };
+            var store = new ProgressStore();
+            if (preview.ObservedRewards) SeedObservedRewards(store.GetOrCreate(1));
+            var window = new MainWindow(config, store, () => saves++)
+            {
+                RequestWeekly = preview.Weekly, IsOpen = true,
+                RewardTrackingStatus = preview.ObservedRewards ? "Suivi actif · récompenses reçues par ce personnage." : null,
+            };
             window.SetSnapshot(preview.LoggedIn ? Fixture(preview.KnownCurrency) : null, null);
             float overflow = 0;
             Vector2 origin = default, actualSize = default;
@@ -113,6 +122,16 @@ internal static unsafe class Program
             bool IsFolded() => (bool)typeof(MainWindow).GetField("folded", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
             void Check(bool condition, string reason) { if (!condition) throw new InvalidOperationException(reason); }
             for (var frame = 0; frame < 4; frame++) Frame();
+            if (preview.ObservedRewards)
+            {
+                var current = (PlanResult)typeof(MainWindow).GetField("plan", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
+                Check(current.Completed.Count(x => x.CompletionSource == CompletionProvenance.RewardObserved) == 2,
+                    "Observed weekly preview must include exactly two automatic reward receipts.");
+                Check(current.Completed.Any(x => x.Objective.Id == "alliance-loot" && x.CompletionSource == CompletionProvenance.Manual),
+                    "A manually reported gear reward must remain distinguishable from observed receipts.");
+                Check(current.Recommendations.Any(x => x.Objective.Id == "mnemonics-cap" && x.Status == ObjectiveStatus.NeedsVerification),
+                    "Unobserved weekly currency must remain unknown.");
+            }
             if (preview.ExpandedGoal)
             {
                 Click(origin + new Vector2(80, 190) * uiScale);
@@ -132,6 +151,11 @@ internal static unsafe class Program
                 Check(IsFolded(), "Folded preview must show only the header.");
                 height = (int)Math.Ceiling(actualSize.Y + 32 * preview.Scale);
             }
+            if (preview.EvidenceTooltip)
+            {
+                io.AddMousePosEvent(origin.X + 80 * uiScale, origin.Y + 270 * uiScale);
+                for (var frame = 0; frame < 3; frame++) Frame();
+            }
             // Font textures may rebake during a frame: fetch the final atlas after rendering.
             byte* atlas; int atlasWidth, atlasHeight;
             io.Fonts.GetTexDataAsRGBA32(0, &atlas, &atlasWidth, &atlasHeight);
@@ -147,6 +171,20 @@ internal static unsafe class Program
             }
         }
         finally { ImGui.DestroyContext(context); }
+    }
+
+    private static void SeedObservedRewards(CharacterProgress progress)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var elapsed = now - ResetClock.PeriodStart(now, ResetCadence.Weekly);
+        DateTimeOffset Recent(int minutes) => now - TimeSpan.FromMinutes(Math.Min(minutes, elapsed.TotalMinutes / 2));
+        // Synthetic item/territory identifiers: these receipts never come from a live character.
+        if (!progress.ObserveReward("alliance-coin", new RewardEvidence(Recent(12), 990001,
+                "Windurst Coin (démonstration)", 9901, "Windurst: The Third Walk", "Fixture synthétique"), now)
+            || !progress.ObserveReward("heavyweight-holoblade", new RewardEvidence(Recent(6), 990002,
+                "Heavy Holoblade (démonstration)", 9902, "AAC Heavyweight M4", "Fixture synthétique"), now))
+            throw new InvalidOperationException("Synthetic weekly receipts must be accepted in the current reset period.");
+        progress.Complete("alliance-loot", Recent(3));
     }
 
     private static CharacterSnapshot Fixture(bool knownCurrency)

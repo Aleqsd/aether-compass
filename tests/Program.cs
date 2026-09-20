@@ -301,6 +301,160 @@ Test("Catalogue references patch dates and preserves reward restrictions", () =>
     Equal(795,Def("heavyweight-savage-4").RewardItemLevel!.Value);
 });
 
+RewardEvidence Evidence(DateTimeOffset? at = null) => new(at ?? now, 12345, "Test reward", 1300, "Test duty", "Inventory delta");
+
+Test("Reward evidence preserves original provenance values", () =>
+{
+    Equal(0,(int)CompletionProvenance.Manual);
+    Equal(1,(int)CompletionProvenance.Observed);
+    Equal(2,(int)CompletionProvenance.RewardObserved);
+});
+Test("Observed reward is evidence of completion with distinct provenance", () =>
+{
+    var p = Progress(); var evidence = Evidence();
+    Check(p.ObserveReward("alliance-coin",evidence,now));
+    Equal(evidence,PlannerEngine.GetRewardEvidence(Def("alliance-coin"),Character(),p,now)!);
+    var result = Find(Plan(Character(),p),"alliance-coin");
+    Equal(ObjectiveStatus.Completed,result.Status);
+    Equal(CompletionProvenance.RewardObserved,result.CompletionSource!.Value);
+    Check(!p.Completions.ContainsKey("alliance-coin") && !p.ManualActivityStates.ContainsKey("alliance-coin"));
+    Equal(ObjectiveStatus.NeedsVerification,Find(Plan(Character(),p),"alliance-loot").Status);
+});
+Test("Observed reward takes priority over manual incomplete and survives manual clearing", () =>
+{
+    var p = Progress(); p.SetIncomplete("alliance-coin",now);
+    p.ObserveReward("alliance-coin",Evidence(),now);
+    Equal(KnowledgeState.Yes,PlannerEngine.GetCompletionState(Def("alliance-coin"),Character(),p,now));
+    p.Complete("alliance-coin",now); p.ClearCompletion("alliance-coin");
+    Equal(1,p.ObservedRewards.Count);
+    Equal(CompletionProvenance.RewardObserved,Find(Plan(Character(),p),"alliance-coin").CompletionSource!.Value);
+    p.SetIncomplete("alliance-coin",now);
+    Equal(KnowledgeState.Yes,PlannerEngine.GetCompletionState(Def("alliance-coin"),Character(),p,now));
+});
+Test("Current live reward state takes priority over stored reward evidence", () =>
+{
+    var p = Progress(); p.ObserveReward("alliance-coin",Evidence(),now);
+    var snapshot = Character() with { Weekly = new Dictionary<string,KnowledgeState> { ["alliance-coin"] = KnowledgeState.No } };
+    Equal(KnowledgeState.No,PlannerEngine.GetCompletionState(Def("alliance-coin"),snapshot,p,now));
+    Equal(CompletionProvenance.Observed,Find(Plan(snapshot,p),"alliance-coin").CompletionSource!.Value);
+    var stale = snapshot with { ObservedAt = now.AddDays(-7) };
+    Equal(KnowledgeState.Yes,PlannerEngine.GetCompletionState(Def("alliance-coin"),stale,p,now));
+});
+Test("Reward evidence expires exactly at Tuesday 08 UTC", () =>
+{
+    var boundary = new DateTimeOffset(2026,9,22,8,0,0,TimeSpan.Zero);
+    var before = boundary.AddTicks(-1); var p = Progress();
+    Check(p.ObserveReward("heavyweight-holoblade",Evidence(before),before));
+    Equal(KnowledgeState.Yes,PlannerEngine.GetCompletionState(Def("heavyweight-holoblade"),Character(),p,before));
+    Check(PlannerEngine.GetRewardEvidence(Def("heavyweight-holoblade"),Character(),p,boundary) is null);
+    Equal(KnowledgeState.Unknown,PlannerEngine.GetCompletionState(Def("heavyweight-holoblade"),Character(),p,boundary));
+    Check(p.ObservedRewards.ContainsKey("heavyweight-holoblade"));
+});
+Test("Reward expiry stays UTC across French DST transition", () =>
+{
+    var sunday = new DateTimeOffset(2026,3,29,4,0,0,TimeSpan.FromHours(2));
+    var reset = new DateTimeOffset(2026,3,31,10,0,0,TimeSpan.FromHours(2));
+    var p = Progress(); Check(p.ObserveReward("alliance-loot",Evidence(sunday),sunday));
+    Equal(KnowledgeState.Yes,PlannerEngine.GetCompletionState(Def("alliance-loot"),Character(),p,reset.AddTicks(-1)));
+    Equal(KnowledgeState.Unknown,PlannerEngine.GetCompletionState(Def("alliance-loot"),Character(),p,reset));
+});
+Test("Reward ingestion is idempotent within a week and advances next week", () =>
+{
+    var p = Progress(); var first = Evidence();
+    Check(p.ObserveReward("alliance-coin",first,now));
+    Check(!p.ObserveReward("alliance-coin",first,now));
+    Check(!p.ObserveReward("alliance-coin",first with { ItemId=99999, ObservedAt=now.AddMinutes(1) },now.AddMinutes(1)));
+    Equal(first,p.ObservedRewards["alliance-coin"]);
+    var nextWeek = Evidence(now.AddDays(7));
+    Check(p.ObserveReward("alliance-coin",nextWeek,now.AddDays(7)));
+    Equal(nextWeek,p.ObservedRewards["alliance-coin"]);
+    Check(!p.ObserveReward("alliance-coin",first,now.AddDays(7)));
+});
+Test("Reward ingestion rejects future invalid and unsupported evidence", () =>
+{
+    var p = Progress();
+    var invalid = new[] { Evidence(now.AddSeconds(1)), Evidence(now.AddDays(-7)), Evidence() with { ObservedAt=default }, Evidence() with { ItemId=0 }, Evidence() with { TerritoryId=0 }, Evidence() with { ItemName=" " }, Evidence() with { DutyName="" }, Evidence() with { Source="" } };
+    foreach (var evidence in invalid) Check(!p.ObserveReward("alliance-coin",evidence,now));
+    Check(!p.ObserveReward("alliance-coin",null!,now));
+    foreach (var id in new[] { "", "not-an-objective", "expert-roulette", "heavyweight-normal", "heavyweight-savage-4", "msq" })
+        Check(!p.ObserveReward(id,Evidence(),now));
+    Check(!Progress(0).ObserveReward("alliance-coin",Evidence(),now));
+    Equal(0,p.ObservedRewards.Count);
+});
+Test("Stored future reward evidence never claims completion", () =>
+{
+    var p = Progress(); p.ObservedRewards["alliance-coin"] = Evidence(now.AddDays(1));
+    Check(PlannerEngine.GetRewardEvidence(Def("alliance-coin"),Character(),p,now) is null);
+    Equal(KnowledgeState.Unknown,PlannerEngine.GetCompletionState(Def("alliance-coin"),Character(),p,now));
+});
+Test("Stored reward evidence never applies to daily or repeatable objectives", () =>
+{
+    var p = Progress();
+    foreach (var id in new[] { "expert-roulette", "heavyweight-savage-4", "msq" })
+    {
+        p.ObservedRewards[id] = Evidence();
+        Check(PlannerEngine.GetRewardEvidence(Def(id),Character(),p,now) is null);
+    }
+});
+Test("Observed rewards are isolated by character", () =>
+{
+    var store = new ProgressStore(); var first = store.GetOrCreate(123); var second = store.GetOrCreate(456);
+    first.ObserveReward("alliance-coin",Evidence(),now);
+    Equal(KnowledgeState.Yes,PlannerEngine.GetCompletionState(Def("alliance-coin"),Character(),first,now));
+    Equal(KnowledgeState.Unknown,PlannerEngine.GetCompletionState(Def("alliance-coin"),Character(contentId:456),second,now));
+    try { PlannerEngine.GetRewardEvidence(Def("alliance-coin"),Character(contentId:456),first,now); throw new Exception("Cross-character evidence accepted"); }
+    catch (ArgumentException) { }
+});
+Test("Manual completion cannot impersonate acquired reward evidence", () =>
+{
+    var p = Progress();
+    try { p.Complete("alliance-coin",now,CompletionProvenance.RewardObserved); throw new Exception("Evidence-free reward provenance accepted"); }
+    catch (ArgumentException) { }
+    Equal(KnowledgeState.Unknown,PlannerEngine.GetCompletionState(Def("alliance-coin"),Character(),p,now));
+});
+Test("Observed reward persists with all evidence fields and old v1 remains loadable", () =>
+{
+    var path = Path.Combine(Path.GetTempPath(),$"aether-compass-evidence-{Guid.NewGuid():N}.json");
+    try
+    {
+        var store = new ProgressStore(); var p = store.GetOrCreate(123); var evidence = Evidence();
+        p.ObserveReward("alliance-coin",evidence,now); p.SetIncomplete("alliance-loot",now);
+        store.Save(path); var restored = ProgressStore.Load(path).GetOrCreate(123);
+        Equal(evidence,restored.ObservedRewards["alliance-coin"]);
+        Equal(CompletionProvenance.RewardObserved,Find(Plan(Character(),restored),"alliance-coin").CompletionSource!.Value);
+        Equal(KnowledgeState.No,restored.ManualActivityStates["alliance-loot"].State);
+        File.WriteAllText(path,"{\"Version\":1,\"Characters\":{\"123\":{\"ContentId\":123,\"Completions\":{},\"ManualActivityStates\":{},\"ManualUnlocks\":{}}}}");
+        var old = ProgressStore.Load(path).GetOrCreate(123);
+        Equal(0,old.ObservedRewards.Count);
+        Equal(KnowledgeState.Unknown,PlannerEngine.GetCompletionState(Def("alliance-coin"),Character(),old,now));
+    }
+    finally { if (File.Exists(path)) File.Delete(path); }
+});
+Test("Malformed reward persistence is rejected without rewriting the file", () =>
+{
+    var path = Path.Combine(Path.GetTempPath(),$"aether-compass-bad-evidence-{Guid.NewGuid():N}.json");
+    var samples = new[]
+    {
+        "{\"Version\":1,\"Characters\":{\"123\":{\"ContentId\":123,\"ObservedRewards\":null}}}",
+        "{\"Version\":1,\"Characters\":{\"123\":{\"ContentId\":123,\"ObservedRewards\":{\"alliance-coin\":null}}}}",
+        "{\"Version\":1,\"Characters\":{\"123\":{\"ContentId\":123,\"ObservedRewards\":{\"alliance-coin\":{}}}}}",
+        "{\"Version\":1,\"Characters\":{\"123\":{\"ContentId\":123,\"ManualActivityStates\":{\"alliance-coin\":{\"State\":2,\"Provenance\":2}}}}}",
+    };
+    try
+    {
+        foreach (var sample in samples)
+        {
+            File.WriteAllText(path,sample);
+            try { ProgressStore.Load(path); throw new Exception("Malformed evidence accepted"); }
+            catch (InvalidDataException) { }
+            Equal(sample,File.ReadAllText(path));
+        }
+    }
+    finally { if (File.Exists(path)) File.Delete(path); }
+});
+
+RewardTrackerTests.Register(Test, now);
+
 var failed = 0;
 foreach (var test in tests)
 {

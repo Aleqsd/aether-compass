@@ -31,7 +31,12 @@ public sealed class PlannerEngine
 
             if (!objective.Repeatable && completion == KnowledgeState.Yes)
             {
-                reasons.Add(completionSource == CompletionProvenance.Manual ? "Terminé selon votre suivi manuel." : "Terminé selon les données observées.");
+                reasons.Add(completionSource switch
+                {
+                    CompletionProvenance.Manual => "Terminé selon votre suivi manuel.",
+                    CompletionProvenance.RewardObserved => "Terminé : acquisition de la récompense observée pendant la période en cours.",
+                    _ => "Terminé selon les données observées.",
+                });
                 all.Add(new ObjectiveRecommendation(objective, 0, ObjectiveStatus.Completed, reasons, blockers, completionSource));
                 continue;
             }
@@ -147,9 +152,21 @@ public sealed class PlannerEngine
         if (objective.Repeatable) return KnowledgeState.Unknown;
         var live = LiveCompletion(objective, snapshot, progress, now);
         if (live != KnowledgeState.Unknown) return live;
+        if (GetRewardEvidence(objective, snapshot, progress, now) is not null) return KnowledgeState.Yes;
         if (progress.ManualActivityStates.TryGetValue(objective.Id, out var activity) && ResetClock.IsCurrent(activity.At, now, objective.Cadence)) return activity.State;
         if (progress.Completions.TryGetValue(objective.Id, out var completion) && ResetClock.IsCurrent(completion.CompletedAt, now, objective.Cadence)) return KnowledgeState.Yes;
         return KnowledgeState.Unknown;
+    }
+
+    public static RewardEvidence? GetRewardEvidence(ObjectiveDefinition objective, CharacterSnapshot snapshot, CharacterProgress progress, DateTimeOffset now)
+    {
+        EnsureSameCharacter(snapshot, progress);
+        if (objective.Cadence != ResetCadence.Weekly || objective.Repeatable
+            || !progress.ObservedRewards.TryGetValue(objective.Id, out var evidence)
+            || !CharacterProgress.IsValidRewardEvidence(evidence)
+            || !ResetClock.IsCurrent(evidence.ObservedAt, now, ResetCadence.Weekly))
+            return null;
+        return evidence;
     }
 
     private static CompletionProvenance? GetCompletionSource(ObjectiveDefinition objective, CharacterSnapshot snapshot, CharacterProgress progress, DateTimeOffset now)
@@ -157,6 +174,7 @@ public sealed class PlannerEngine
         if (objective.Repeatable) return null;
         var liveWithoutManual = LiveCompletion(objective, snapshot, new CharacterProgress { ContentId = snapshot.ContentId }, now);
         if (liveWithoutManual != KnowledgeState.Unknown) return CompletionProvenance.Observed;
+        if (GetRewardEvidence(objective, snapshot, progress, now) is not null) return CompletionProvenance.RewardObserved;
         if (LiveCompletion(objective, snapshot, progress, now) != KnowledgeState.Unknown) return CompletionProvenance.Manual;
         if (progress.ManualActivityStates.TryGetValue(objective.Id, out var activity) && ResetClock.IsCurrent(activity.At, now, objective.Cadence)) return activity.Provenance;
         if (progress.Completions.TryGetValue(objective.Id, out var completion) && ResetClock.IsCurrent(completion.CompletedAt, now, objective.Cadence)) return completion.Provenance;

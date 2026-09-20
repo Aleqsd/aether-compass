@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace AetherCompass.Core;
 
-/// <summary>Per-character manual facts. A weekly checkmark expires by UTC reset, not by login.</summary>
+/// <summary>Per-character manual facts and observed rewards. Periodic facts expire at UTC reset.</summary>
 public sealed class ProgressStore
 {
     public int Version { get; set; } = 1;
@@ -28,12 +28,14 @@ public sealed class ProgressStore
             if (pair.Key == 0 || pair.Value is null || pair.Value.ContentId != pair.Key)
                 throw new InvalidDataException("Character identifiers do not match the progress records.");
             var progress = pair.Value;
-            if (progress.Completions is null || progress.ManualActivityStates is null || progress.ManualUnlocks is null)
+            if (progress.Completions is null || progress.ManualActivityStates is null || progress.ManualUnlocks is null || progress.ObservedRewards is null)
                 throw new InvalidDataException("Character progress contains a null collection.");
-            if (progress.Completions.Any(x => string.IsNullOrWhiteSpace(x.Key) || x.Value is null || !Enum.IsDefined(x.Value.Provenance))
-                || progress.ManualActivityStates.Any(x => string.IsNullOrWhiteSpace(x.Key) || x.Value is null || !Enum.IsDefined(x.Value.State) || !Enum.IsDefined(x.Value.Provenance))
+            if (progress.Completions.Any(x => string.IsNullOrWhiteSpace(x.Key) || x.Value is null || !Enum.IsDefined(x.Value.Provenance) || x.Value.Provenance == CompletionProvenance.RewardObserved)
+                || progress.ManualActivityStates.Any(x => string.IsNullOrWhiteSpace(x.Key) || x.Value is null || !Enum.IsDefined(x.Value.State) || !Enum.IsDefined(x.Value.Provenance) || x.Value.Provenance == CompletionProvenance.RewardObserved)
                 || progress.ManualUnlocks.Any(x => string.IsNullOrWhiteSpace(x.Key) || !Enum.IsDefined(x.Value)))
                 throw new InvalidDataException("Character progress contains an invalid observation.");
+            if (progress.ObservedRewards.Any(x => string.IsNullOrWhiteSpace(x.Key) || !CharacterProgress.IsValidRewardEvidence(x.Value)))
+                throw new InvalidDataException("Character progress contains invalid reward evidence.");
         }
         return store;
     }

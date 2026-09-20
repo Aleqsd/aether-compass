@@ -2,7 +2,7 @@
   "Author": "Aleqsd",
   "Name": "Aether Compass",
   "InternalName": "AetherCompass",
-  "AssemblyVersion": "0.1.0.0",
+  "AssemblyVersion": "0.2.0.0",
   "Description": "Une boussole de progression au niveau 100 : objectifs expliqués selon le job, les quêtes, les déblocages, l'équipement et les activités hebdomadaires. Catalogue 7.56. Données locales, états inconnus explicites. Version expérimentale à valider en jeu.",
   "Punchline": "Choisis ton prochain objectif en Éorzéa.",
   "RepoUrl": "https://github.com/Aleqsd/aether-compass",

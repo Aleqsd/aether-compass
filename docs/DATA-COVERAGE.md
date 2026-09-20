@@ -16,16 +16,34 @@ Le lecteur utilise **Dalamud API 15** et ses données Lumina locales. Il observe
 | Mémoquartz limités acquis | `GetWeeklyAcquiredTomestoneCount` | Compteur acquis depuis le reset, jamais déduit du stock. |
 | Plafond hebdomadaire | `GetLimitedTomestoneWeeklyLimit` | Le plafond vient du client ; il n'est pas figé à 450. |
 | Stock de mémoquartz limités | Monnaie unique identifiée par `TomestonesItem`/`Tomestones.WeeklyLimit`, puis `GetTomestoneCount` | Si la monnaie n'est pas identifiée sans ambiguïté, le stock reste inconnu. |
+| Hololame Heavyweight | `IGameInventory.InventoryChanged` + gain net de Heavy Holoblade dans AAC Heavyweight M4 normal | Preuve d'acquisition observée, datée et conservée pour la semaine du personnage. |
+| Pièce de Windurst | Même observation pour Ranperre Coin dans Windurst | Indépendante du butin d'équipement. |
+| Équipement de Windurst | Même observation pour les 35 armures Vana'dielian de la liste officielle | Objet identifié par nom exact, niveau 100, i780, non échangeable et emplacement d'armure ; jamais par iLv seul. |
 
 Les accès au raid normal M1 et M4 sont distincts. Chaque étage Savage possède son propre état d'accès. L'accès à `A Phantom Reborn` indique le début de la progression de relique ; il ne prouve pas l'étape courante d'une arme.
 
 ## Ce qui demande une confirmation dans l'interface
 
-Les droits aux récompenses de raid normal/Savage et d'alliance ne sont pas déduits d'un clear ou d'un objet présent en inventaire. Un clear ne prouve pas l'obtention d'un butin. Le suivi de l'hololame, de la pièce d'alliance, des butins d'alliance et de la remise du carnet de Khloe reste donc **inconnu** jusqu'à une déclaration manuelle conservée pour ce personnage et ce cycle.
+Les droits aux récompenses ne sont pas déduits d'un clear ou d'un objet déjà présent en inventaire. Depuis la version 0.2.0, l'acquisition de l'hololame Heavyweight, de la pièce de Windurst et de son équipement peut être constatée pendant que le plugin fonctionne. Sans cette preuve, une lecture native connue ou une déclaration manuelle du cycle, l'état reste **inconnu**. L'absence de gain ne prouve jamais qu'une récompense reste disponible.
 
 Le carnet de Khloe possède sa propre validité : posséder un carnet, y poser neuf vignettes et l'avoir rendu cette semaine sont trois états différents. Le lecteur n'assimile aucun de ces états à une remise hebdomadaire.
 
-### Pourquoi les récompenses restent déclaratives
+### Observation des acquisitions depuis la version 0.2.0
+
+`WeeklyRewardObserver` écoute les événements réconciliés `IGameInventory.InventoryChanged`. Un ajout ou une hausse de quantité constitue seulement un candidat. Le moteur pur `RewardInventoryTracker` exige aussi :
+
+1. Le même personnage connecté et le territoire associé au contenu exact, résolu depuis les tables locales. Aucun scan des servants, autres joueurs, coffres ou banques.
+2. Les quatre sacs, l'équipement et les armureries personnelles chargés. Tous leurs objets sont agrégés : équiper, déplacer, fusionner ou diviser une pile ne crée pas un gain.
+3. Une référence initiale stable pendant deux secondes. Le stock au chargement ou à la reconnexion n'est jamais traité comme une acquisition.
+4. Un gain net au-dessus du maximum déjà vu dans cette session, confirmé pendant une seconde. Une baisse puis un retour du même stock, ou une duplication transitoire lors d'un déplacement, n'apporte pas de preuve.
+
+Déconnexion, changement de territoire/personnage, inventaire indisponible, interruption de plus de cinq secondes ou changement de semaine réinitialisent l'observation. Une acquisition pendant l'amorçage, une interruption ou immédiatement avant la sortie peut donc ne pas être reconnue. Le plugin privilégie alors l'état inconnu. Il reste actif en combat et en cinématique pour recevoir les récompenses, indépendamment du panneau et de la lecture périodique du personnage.
+
+Le suivi distingue les deux récompenses de Windurst. Une pièce seule ne coche pas l'équipement et une armure seule ne coche pas la pièce. Un succès de mission n'est jamais utilisé comme preuve de butin ; les messages de chat ne sont pas analysés.
+
+Les preuves conservent l'objet, son identifiant, le contenu, le territoire, la date et la méthode d'observation, séparément des déclarations manuelles. Une seule preuve par objectif est retenue pour la semaine. La priorité est : état natif connu, preuve actuelle, puis déclaration manuelle. Les preuves expirent au mardi 08:00 UTC même si le plugin était arrêté au moment du reset ; elles survivent à la déconnexion et au redémarrage du plugin. Les fichiers de progression 0.1.0 restent lisibles.
+
+### Limites de l'historique et des droits natifs
 
 Une revue des assemblies API 15 et des structures publiées a été effectuée pour la version initiale :
 
@@ -34,13 +52,13 @@ Une revue des assemblies API 15 et des structures publiées a été effectuée p
 - `LootItem.WeeklyLootItem` décrit un objet dans la fenêtre de butin courante. Il ne constitue pas un historique persistant des récompenses du personnage et ne couvre pas une récompense acquise avant le lancement du plugin.
 - Les fonctions `WeeklyBingo` publiées renseignent le carnet possédé, ses vignettes et son expiration ; elles ne fournissent pas un état documenté « récompense du carnet remise pendant ce cycle ».
 
-Ces obstacles empêchent d'ajouter une observation automatique fiable et indépendante des trois récompenses avec le contrat actuel. Aucun offset deviné, masque de bits non documenté ou scan de signature personnalisé n'est ajouté. Une future implémentation devra disposer d'un mapping documenté par récompense et vérifier en jeu les cas pièce seule, butin seul, les deux, aucun, puis le reset.
+Ces obstacles empêchent de reconstituer les acquisitions antérieures au démarrage avec le contrat actuel. L'observation événementielle ci-dessus apporte seulement des preuves nouvelles. Aucun offset deviné, masque de bits non documenté ou scan de signature personnalisé n'est ajouté. Les cas pièce seule, butin seul, les deux, aucun, puis le reset restent à valider en jeu.
 
 L'analyse d'équipement relève le niveau d'objet et l'éligibilité au job. Elle ne calcule pas le meilleur équipement théorique, les seuils de vitesse, les matéria optimales, la qualité NQ/HQ, les réparations ou un score de maîtrise du joueur. Les autres jobs, les servants et les personnages déconnectés ne sont pas scannés.
 
 ## Chargement, changement de personnage et mises à jour
 
-`Read()` doit être appelé sur le thread de mise à jour Dalamud. Le plugin limite sa fréquence. Aucune lecture n'est publiée sans personnage local et état joueur chargé, ou pendant le combat, un changement de zone, une déconnexion ou une cinématique. L'identité est vérifiée une seconde fois avant de publier le résultat. Aucun pointeur natif n'est conservé entre deux appels.
+`GameSnapshotReader.Read()` doit être appelé sur le thread de mise à jour Dalamud. Le plugin limite sa fréquence. Aucune fiche du personnage n'est publiée sans personnage local et état joueur chargé, ou pendant le combat, un changement de zone, une déconnexion ou une cinématique. L'observateur de récompenses suit un cycle séparé décrit ci-dessus. L'identité est vérifiée une seconde fois avant de publier le résultat. Aucun pointeur natif n'est conservé entre deux appels.
 
 Les signatures des fonctions utilisées sont vérifiées avant l'appel ; un pointeur, une table ou une donnée indisponible ne devient jamais un état « non fait » par défaut. `KnowledgeState.Unknown` est différent de `No`. Les exceptions ordinaires d'une section la rendent indisponible sans fabriquer de compteur.
 
@@ -52,6 +70,11 @@ La compilation vérifie les contrats du SDK. Elle ne remplace pas une validation
 
 ## Références de développement
 
+- [Contrat IGameInventory](https://github.com/goatcorp/Dalamud/blob/master/Dalamud/Plugin/Services/IGameInventory.cs)
+- [Réconciliation des changements d'inventaire](https://github.com/goatcorp/Dalamud/blob/master/Dalamud/Game/Inventory/GameInventory.cs)
+- [Heavy Holoblade : objet officiel](https://na.finalfantasyxiv.com/lodestone/playguide/db/item/ea32db04a91/)
+- [Ranperre Coin : objet officiel](https://na.finalfantasyxiv.com/lodestone/playguide/db/item/30fd80b9e04/)
+- [Liste officielle des coffres de Windurst](https://na.finalfantasyxiv.com/lodestone/playguide/db/duty/e40698b1f19/)
 - [Contrat IPlayerState](https://github.com/goatcorp/Dalamud/blob/master/Dalamud/Plugin/Services/IPlayerState.cs)
 - [Contrat IUnlockState](https://github.com/goatcorp/Dalamud/blob/master/Dalamud/Plugin/Services/IUnlockState.cs)
 - [InventoryManager : compteurs de monnaies](https://github.com/aers/FFXIVClientStructs/blob/main/FFXIVClientStructs/FFXIV/Client/Game/InventoryManager.cs)

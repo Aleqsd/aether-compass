@@ -9,7 +9,7 @@ public enum ObjectiveFocus { Balanced, Gearing, Story, Weekly }
 public enum ObjectiveStatus { Available, NeedsVerification, Completed, Blocked }
 public enum ResetCadence { None, Daily, Weekly }
 public enum ProgressStage { Leveling, Fresh100, CatchUp, Endgame, Advanced, NonCombat, Unknown }
-public enum CompletionProvenance { Manual, Observed }
+public enum CompletionProvenance { Manual, Observed, RewardObserved }
 public enum GearSlotKind { Unknown, Weapon, Armor, Accessory }
 
 public sealed record GearSlot(string Slot, string ItemName, uint ItemId, int ItemLevel,
@@ -50,6 +50,8 @@ public sealed record Preferences
 public sealed record CompletionRecord(DateTimeOffset CompletedAt, CompletionProvenance Provenance);
 public sealed record ActivityRecord(KnowledgeState State, DateTimeOffset At,
     CompletionProvenance Provenance = CompletionProvenance.Manual);
+public sealed record RewardEvidence(DateTimeOffset ObservedAt, uint ItemId, string ItemName,
+    uint TerritoryId, string DutyName, string Source);
 
 public sealed class CharacterProgress
 {
@@ -57,9 +59,36 @@ public sealed class CharacterProgress
     public Dictionary<string, CompletionRecord> Completions { get; set; } = new();
     public Dictionary<string, ActivityRecord> ManualActivityStates { get; set; } = new();
     public Dictionary<string, KnowledgeState> ManualUnlocks { get; set; } = new();
+    public Dictionary<string, RewardEvidence> ObservedRewards { get; set; } = new();
+
+    /// <summary>
+    /// Records the first valid reward observed in the current weekly period. The adapter is
+    /// responsible for matching the acquired item and duty to the objective before calling.
+    /// Historical evidence survives manual edits and is replaced only in a new period.
+    /// </summary>
+    public bool ObserveReward(string objectiveId, RewardEvidence evidence, DateTimeOffset? now = null)
+    {
+        var observedNow = now ?? DateTimeOffset.UtcNow;
+        if (ContentId == 0 || string.IsNullOrWhiteSpace(objectiveId) || !IsValidRewardEvidence(evidence)
+            || !ObjectiveCatalog.All.Any(x => x.Id == objectiveId && x.Cadence == ResetCadence.Weekly && !x.Repeatable)
+            || !ResetClock.IsCurrent(evidence.ObservedAt, observedNow, ResetCadence.Weekly))
+            return false;
+        if (ObservedRewards.TryGetValue(objectiveId, out var previous) && IsValidRewardEvidence(previous)
+            && ResetClock.IsCurrent(previous.ObservedAt, observedNow, ResetCadence.Weekly))
+            return false;
+        ObservedRewards[objectiveId] = evidence;
+        return true;
+    }
+
+    internal static bool IsValidRewardEvidence(RewardEvidence? evidence)
+        => evidence is not null && evidence.ObservedAt != default && evidence.ItemId != 0 && evidence.TerritoryId != 0
+            && !string.IsNullOrWhiteSpace(evidence.ItemName) && !string.IsNullOrWhiteSpace(evidence.DutyName)
+            && !string.IsNullOrWhiteSpace(evidence.Source);
 
     public void Complete(string objectiveId, DateTimeOffset at, CompletionProvenance provenance = CompletionProvenance.Manual)
     {
+        if (provenance == CompletionProvenance.RewardObserved)
+            throw new ArgumentException("Observed rewards require their own evidence record.", nameof(provenance));
         Completions[objectiveId] = new CompletionRecord(at, provenance);
         ManualActivityStates[objectiveId] = new ActivityRecord(KnowledgeState.Yes, at, provenance);
     }

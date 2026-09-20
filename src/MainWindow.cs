@@ -27,6 +27,7 @@ public sealed class MainWindow : Window
     private bool showAllGoals;
     private string? expandedGoal;
     public string? SaveError { get; set; }
+    public string? RewardTrackingStatus { get; set; }
     public bool RequestWeekly { get; set; }
 
     public MainWindow(Configuration config, ProgressStore store, Action save) : base("Aether Compass###AetherCompass")
@@ -68,6 +69,7 @@ public sealed class MainWindow : Window
             if (settings) { DrawPreferences(); return; }
             ImGui.Spacing(); ImGui.TextWrapped(readError is null ? "Connecte-toi à un personnage pour analyser sa progression." : "Analyse temporairement en pause.");
             if (!string.IsNullOrWhiteSpace(readError)) ImGui.TextWrapped(readError);
+            if (!string.IsNullOrWhiteSpace(RewardTrackingStatus)) ColoredWrapped(Muted, RewardTrackingStatus);
             ImGui.TextColored(Muted, "Aucune donnée d'un autre joueur n'est analysée.");
             return;
         }
@@ -194,7 +196,13 @@ public sealed class MainWindow : Window
     private void DrawWeekly()
     {
         ImGui.Spacing(); ColoredWrapped(Muted, "Butin et pièce d'échange séparés. Inconnu signifie : à vérifier.");
-        foreach (var goal in AllGoals().Where(x => x.Objective.Cadence == ResetCadence.Weekly).OrderBy(x => x.Objective.Id).ToArray())
+        var weeklyGoals = AllGoals().Where(x => x.Objective.Cadence == ResetCadence.Weekly).OrderBy(x => x.Objective.Id).ToArray();
+        if (weeklyGoals.Any(goal => PlannerEngine.GetCompletionState(goal.Objective, snapshot!, progress!, DateTimeOffset.UtcNow) == KnowledgeState.Unknown))
+        {
+            ColoredWrapped(Muted, "Les récompenses sont observées depuis l'activation du suivi ; l'historique antérieur reste inconnu.");
+            if (!string.IsNullOrWhiteSpace(RewardTrackingStatus)) ColoredWrapped(Muted, RewardTrackingStatus);
+        }
+        foreach (var goal in weeklyGoals)
         {
             ImGui.PushID(goal.Objective.Id);
             var state = PlannerEngine.GetCompletionState(goal.Objective, snapshot!, progress!, DateTimeOffset.UtcNow);
@@ -202,16 +210,33 @@ public sealed class MainWindow : Window
                 state == KnowledgeState.Yes ? "FAIT" : state == KnowledgeState.No ? "À FAIRE" : "INCONNU");
             ImGui.SameLine(); ImGui.TextWrapped(goal.Objective.Title);
             var live = goal.CompletionSource == CompletionProvenance.Observed;
-            if (live || goal.CompletionSource == CompletionProvenance.Manual && state != KnowledgeState.Unknown)
+            if (goal.CompletionSource == CompletionProvenance.RewardObserved) DrawRewardEvidence(goal);
+            else if (live || goal.CompletionSource == CompletionProvenance.Manual && state != KnowledgeState.Unknown)
                 ImGui.TextColored(Muted, live ? "Lu en jeu" : "Déclaration manuelle");
             foreach (var blocker in goal.Blockers) ImGui.TextWrapped(blocker);
-            DrawActivityControls(goal);
+            DrawActivityControls(goal, showRewardEvidence: false);
             ImGui.Separator(); ImGui.PopID();
         }
         ImGui.Spacing(); ImGui.TextWrapped("Savage Heavyweight : répétable dans le catalogue 7.56, sans verrou hebdomadaire. Le carnet de Khloe est facultatif dans les préférences.");
     }
 
-    private void DrawActivityControls(ObjectiveRecommendation goal)
+    private void DrawRewardEvidence(ObjectiveRecommendation goal)
+    {
+        var evidence = PlannerEngine.GetRewardEvidence(goal.Objective, snapshot!, progress!, DateTimeOffset.UtcNow);
+        ColoredWrapped(Muted, evidence is null ? "Récompense observée" : $"Récompense observée · {evidence.ObservedAt.ToLocalTime():HH:mm}");
+        if (evidence is null || !ImGui.IsItemHovered()) return;
+        ImGui.BeginTooltip();
+        ImGui.PushTextWrapPos(ImGui.GetFontSize() * 30);
+        ImGui.TextWrapped($"Objet : {evidence.ItemName} (#{evidence.ItemId})");
+        ImGui.TextWrapped($"Contenu : {evidence.DutyName}");
+        ImGui.TextWrapped($"Observation : {evidence.ObservedAt.ToLocalTime():dd/MM/yyyy HH:mm:ss zzz}");
+        ImGui.TextWrapped($"Source : {evidence.Source}");
+        ImGui.TextWrapped("Réception de la récompense constatée ; une victoire seule ne valide pas le butin.");
+        ImGui.PopTextWrapPos();
+        ImGui.EndTooltip();
+    }
+
+    private void DrawActivityControls(ObjectiveRecommendation goal, bool showRewardEvidence = true)
     {
         if (goal.Objective.Repeatable)
         {
@@ -226,6 +251,11 @@ public sealed class MainWindow : Window
         if (goal.CompletionSource == CompletionProvenance.Observed)
         {
             ImGui.TextColored(Muted, "Suivi automatique.");
+            return;
+        }
+        if (goal.CompletionSource == CompletionProvenance.RewardObserved)
+        {
+            if (showRewardEvidence) DrawRewardEvidence(goal);
             return;
         }
         if (ImGui.SmallButton("Fait")) { progress!.Complete(goal.Objective.Id, DateTimeOffset.UtcNow); Changed(); }
@@ -304,12 +334,14 @@ public sealed class MainWindow : Window
         ImGui.TextWrapped("Les durées sont des estimations hors file d'attente. La difficulté choisie exprime une préférence, pas une évaluation de ta maîtrise des combats.");
         ImGui.TextWrapped("Analyse locale du personnage connecté. Aucune donnée envoyée à un serveur. La progression manuelle est séparée par personnage ; les préférences sont communes au plugin.");
         ImGui.TextWrapped("Catalogue 7.56 · vérification documentaire du 20/09/2026. Si le jeu a changé de patch, vérifie les plafonds et restrictions dans ses notes officielles.");
-        ImGui.TextWrapped("Version 0.1.0 expérimentale. Compilation et logique vérifiées hors jeu ; validation en jeu requise.");
+        ImGui.TextWrapped("Version 0.2.0 expérimentale. Compilation et logique vérifiées hors jeu ; validation en jeu requise.");
         DrawDataNotes();
     }
 
     private void DrawDataNotes()
     {
+        if (!string.IsNullOrWhiteSpace(RewardTrackingStatus)) ColoredWrapped(Muted, RewardTrackingStatus);
+        ImGui.TextWrapped("Le suivi des récompenses commence à son activation. Sans preuve observée ni lecture du jeu, une activité reste inconnue ; les actions antérieures ne sont pas reconstituées.");
         foreach (var warning in plan?.DataWarnings ?? Array.Empty<string>()) ImGui.TextWrapped($"• {warning}");
         if (readError is not null) ImGui.TextWrapped(readError);
         ImGui.TextWrapped("Un changement de zone peut rendre certaines données temporairement indisponibles. Aucune supposition n'est faite sur les quêtes ou les weekly des autres joueurs.");

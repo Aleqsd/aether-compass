@@ -27,14 +27,17 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
     [PluginService] internal static IPlayerState Player { get; private set; } = null!;
     [PluginService] internal static IUnlockState Unlocks { get; private set; } = null!;
+    [PluginService] internal static IGameInventory Inventory { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
     private readonly WindowSystem windows = new("AetherCompass");
     private readonly GameSnapshotReader reader;
+    private readonly WeeklyRewardObserver rewards;
     private readonly MainWindow window;
     private readonly string progressPath;
     private readonly ProgressStore progress;
     private readonly Configuration config;
     private DateTimeOffset nextRead;
+    private DateTimeOffset nextSaveAttempt;
     private bool dirty;
 
     public Plugin()
@@ -52,6 +55,8 @@ public sealed class Plugin : IDalamudPlugin
         }
         reader = new GameSnapshotReader(Client, Objects, Data, Condition, Player, Unlocks, Log);
         window = new MainWindow(config, progress, () => dirty = true);
+        rewards = new WeeklyRewardObserver(Client, Player, Objects, Data, Condition, Inventory, Log, progress,
+            () => { dirty = true; nextRead = DateTimeOffset.MinValue; });
         windows.AddWindow(window);
         Commands.AddHandler("/aethercompass", new CommandInfo(OnCommand) { HelpMessage = "Ouvrir les objectifs de progression. /aethercompass weekly : suivi hebdomadaire." });
         Commands.AddHandler("/goals", new CommandInfo(OnCommand) { HelpMessage = "Ouvrir Aether Compass." });
@@ -66,12 +71,19 @@ public sealed class Plugin : IDalamudPlugin
     private void Draw() => windows.Draw();
     private void Update(IFramework framework)
     {
-        if (dirty)
-        {
-            try { Pi.SavePluginConfig(config); progress.Save(progressPath); dirty = false; }
-            catch (Exception ex) { Log.Error(ex, "Cannot save progression."); dirty = false; window.SaveError = "Enregistrement impossible ; consulte le journal Dalamud."; }
-        }
+        rewards.Update();
+        window.RewardTrackingStatus = rewards.Status;
         var now = DateTimeOffset.UtcNow;
+        if (dirty && now >= nextSaveAttempt)
+        {
+            try { Pi.SavePluginConfig(config); progress.Save(progressPath); dirty = false; window.SaveError = null; }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Cannot save progression; will retry.");
+                nextSaveAttempt = now.AddSeconds(5);
+                window.SaveError = "Enregistrement impossible ; nouvelle tentative automatique dans quelques secondes.";
+            }
+        }
         // Clear immediately on logout, without retaining another character's screen.
         if (!Client.IsLoggedIn) { window.SetSnapshot(null, null); return; }
         if (now < nextRead) return;
@@ -83,6 +95,7 @@ public sealed class Plugin : IDalamudPlugin
     public void Dispose()
     {
         Framework.Update -= Update;
+        rewards.Dispose();
         Pi.UiBuilder.Draw -= Draw;
         Pi.UiBuilder.OpenMainUi -= Open;
         Pi.UiBuilder.OpenConfigUi -= Open;
