@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks><PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>AetherCompass</AssemblyName><Version>0.1.0.0</Version><Author>Aleqsd</Author>
+    <Deterministic>true</Deterministic><IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+    <PathMap>$(MSBuildProjectDirectory)=/_/src</PathMap>
+    <DalamudHome Condition="'$(DalamudHome)' == ''">$(APPDATA)/XIVLauncher/addon/Hooks/dev</DalamudHome>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="Core/**/*.cs" />
+    <ProjectReference Include="Core/AetherCompass.Core.csproj" />
+    <Reference Include="Dalamud" HintPath="$(DalamudHome)/Dalamud.dll" Private="false" />
+    <Reference Include="Dalamud.Bindings.ImGui" HintPath="$(DalamudHome)/Dalamud.Bindings.ImGui.dll" Private="false" />
+    <Reference Include="Lumina" HintPath="$(DalamudHome)/Lumina.dll" Private="false" />
+    <Reference Include="Lumina.Excel" HintPath="$(DalamudHome)/Lumina.Excel.dll" Private="false" />
+    <Reference Include="FFXIVClientStructs" HintPath="$(DalamudHome)/FFXIVClientStructs.dll" Private="false" />
+    <Reference Include="InteropGenerator.Runtime" HintPath="$(DalamudHome)/InteropGenerator.Runtime.dll" Private="false" />
+    <Reference Include="HexaGen.Runtime" HintPath="$(DalamudHome)/HexaGen.Runtime.dll" Private="false" />
+    <None Update="AetherCompass.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>
