@@ -4,6 +4,8 @@
 
 Aether Compass croise le niveau réel du job, les pièces équipées, les quêtes d'épopée, les accès aux contenus et le plafond hebdomadaire de mémoquartz. Il propose des objectifs classés et explique leurs prérequis, leur intérêt et les données qui restent à vérifier.
 
+Le panneau s'inspire de **LMeter** : fond anthracite translucide, en-tête intégré, accent discret et lignes compactes. Les six premières priorités sont visibles en lecture rapide ; cliquer sur une ligne affiche ses raisons et prérequis. L'en-tête permet de déplacer, replier, verrouiller et fermer le panneau. L'engrenage ouvre les préférences dans le même panneau.
+
 **Version 0.1.0 expérimentale — Dalamud API 15, catalogue patch 7.56.** Compilation et tests hors jeu ; comportement en jeu à confirmer. L'analyse porte sur le personnage connecté. Les quêtes, monnaies et weekly des autres joueurs ne sont pas accessibles à ce plugin.
 
 ![Objectifs expliqués pour un personnage niveau 100](docs/images/goals-level100.png)
@@ -21,7 +23,7 @@ Aether Compass croise le niveau réel du job, les pièces équipées, les quête
 - Déclarations sauvegardées par personnage. Les activités hebdomadaires expirent au mardi 08:00 UTC ; les quotidiennes à 15:00 UTC. Au nouveau cycle, une déclaration passée redevient inconnue.
 - Préférences de difficulté, temps de session, priorité équipement/histoire/hebdomadaire et carnet de Khloe facultatif.
 
-L'interface reste fermée au chargement. Ouvrir avec **`/goals`** ou **`/aethercompass`** ; **`/aethercompass weekly`** ouvre le suivi hebdomadaire. Les lectures sont suspendues en combat, pendant les cinématiques et les changements de zone.
+L'interface reste fermée au chargement. Ouvrir et déplier avec **`/goals`** ou **`/aethercompass`** ; **`/aethercompass weekly`** ouvre le suivi hebdomadaire. Le verrouillage empêche seulement le déplacement et le redimensionnement ; les boutons restent actifs. Les lectures sont suspendues en combat, pendant les cinématiques et les changements de zone.
 
 ## Installer la préversion
 

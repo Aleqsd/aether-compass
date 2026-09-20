@@ -18,16 +18,35 @@ public sealed class MainWindow : Window
     private PlanResult? plan;
     private CharacterProgress? progress;
     private string? readError;
+    private bool folded;
+    private bool restoreSize;
+    private Vector2 expandedSize;
+    private float headerHeight = 50;
+    private int selectedView;
+    private bool settings;
+    private bool showAllGoals;
+    private string? expandedGoal;
     public string? SaveError { get; set; }
     public bool RequestWeekly { get; set; }
 
     public MainWindow(Configuration config, ProgressStore store, Action save) : base("Aether Compass###AetherCompass")
     {
         this.config = config; this.store = store; this.save = save;
-        Size = new Vector2(790, 650);
+        Size = new Vector2(580, 600);
         SizeCondition = ImGuiCond.FirstUseEver;
-        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(590, 410), MaximumSize = new Vector2(float.MaxValue) };
+        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(520, 340), MaximumSize = new Vector2(float.MaxValue) };
     }
+
+    public void Expand() { if (folded) { folded = false; restoreSize = true; } }
+    public override void PreDraw()
+    {
+        CompassTheme.Push();
+        Flags = CompassTheme.Flags(config.Locked, folded);
+        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(520, folded ? 40 : 340), MaximumSize = new Vector2(float.MaxValue) };
+        if (folded) ImGui.SetNextWindowSize(new Vector2(expandedSize.X, headerHeight));
+        else if (restoreSize) { ImGui.SetNextWindowSize(expandedSize); restoreSize = false; }
+    }
+    public override void PostDraw() => CompassTheme.Pop();
 
     public void SetSnapshot(CharacterSnapshot? value, string? error)
     {
@@ -41,36 +60,75 @@ public sealed class MainWindow : Window
 
     public override void Draw()
     {
-        ImGui.TextColored(Accent, "AETHER COMPASS");
-        ImGui.SameLine(); ImGui.TextColored(Muted, "  Ta prochaine étape en Éorzéa");
+        DrawHeader();
+        if (folded) return;
         if (SaveError is not null) ImGui.TextWrapped(SaveError);
         if (snapshot is null || plan is null || progress is null)
         {
+            if (settings) { DrawPreferences(); return; }
             ImGui.Spacing(); ImGui.TextWrapped(readError is null ? "Connecte-toi à un personnage pour analyser sa progression." : "Analyse temporairement en pause.");
             if (!string.IsNullOrWhiteSpace(readError)) ImGui.TextWrapped(readError);
             ImGui.TextColored(Muted, "Aucune donnée d'un autre joueur n'est analysée.");
             return;
         }
-        ImGui.TextUnformatted($"{snapshot.Name}  ·  {snapshot.Job} {snapshot.Level}  ·  iLvl {snapshot.AverageItemLevel?.ToString() ?? "?"}");
-        ImGui.TextWrapped(plan.StageExplanation);
-        ImGui.Spacing();
+        ImGui.TextColored(Muted, StageLabel(plan.Stage));
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(plan.StageExplanation);
         var currency = snapshot.Tomestones;
         var earned = currency.EarnedThisWeek;
         var cap = currency.WeeklyCap;
-        var caption = earned.HasValue && cap is > 0 ? $"Mémoquartz limités : {earned} / {cap} cette semaine" : "Mémoquartz limités : acquisition hebdomadaire inconnue";
-        ImGui.ProgressBar(earned.HasValue && cap is > 0 ? Math.Clamp((float)earned.Value / cap.Value, 0, 1) : 0, new Vector2(-1, ImGui.GetFrameHeight()), caption);
+        var caption = earned.HasValue && cap is > 0 ? $"{earned} / {cap} mémoquartz cette semaine" : "Acquisition hebdomadaire à vérifier";
+        ImGui.TextUnformatted(caption);
+        var s = ImGui.GetFontSize() / 17;
+        ImGui.ProgressBar(earned.HasValue && cap is > 0 ? Math.Clamp((float)earned.Value / cap.Value, 0, 1) : 0, new Vector2(-1, 3*s), "");
         var reset = NextWeekly(DateTimeOffset.UtcNow);
         var remaining = reset - DateTimeOffset.UtcNow;
-        ColoredWrapped(Muted, $"Reset : mardi 08:00 UTC · dans {(int)remaining.TotalDays} j {remaining.Hours} h · stock : {currency.Stock?.ToString() ?? "?"}");
+        ColoredWrapped(Muted, $"Reset dans {(int)remaining.TotalDays} j {remaining.Hours} h  ·  stock {currency.Stock?.ToString() ?? "?"}");
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Reset hebdomadaire : mardi 08:00 UTC. Le stock et les gains hebdomadaires sont indépendants.");
+        ImGui.Spacing();
+        if (RequestWeekly) { selectedView = 1; settings = false; RequestWeekly = false; }
+        string[] navigation = ["Priorités", "Cette semaine", "Équipement", "Accès"];
+        for (var i = 0; i < navigation.Length; i++)
+        {
+            if (i > 0) ImGui.SameLine(0, 10*s);
+            if (CompassTheme.Nav(navigation[i], selectedView == i && !settings)) { selectedView = i; settings = false; }
+        }
         ImGui.Separator();
-        if (!ImGui.BeginTabBar("CompassTabs")) return;
-        if (ImGui.BeginTabItem("Objectifs")) { DrawGoals(); ImGui.EndTabItem(); }
-        var weeklyFlags = RequestWeekly ? ImGuiTabItemFlags.SetSelected : ImGuiTabItemFlags.None;
-        if (ImGui.BeginTabItem("Hebdomadaire", weeklyFlags)) { RequestWeekly = false; DrawWeekly(); ImGui.EndTabItem(); }
-        if (ImGui.BeginTabItem("Équipement")) { DrawGear(); ImGui.EndTabItem(); }
-        if (ImGui.BeginTabItem("Progression")) { DrawUnlocks(); ImGui.EndTabItem(); }
-        if (ImGui.BeginTabItem("Préférences")) { DrawPreferences(); ImGui.EndTabItem(); }
-        ImGui.EndTabBar();
+        ImGui.BeginChild("CompassContent", new Vector2(0, -22*s), false);
+        if (settings) DrawPreferences();
+        else switch (selectedView) { case 0: DrawGoals(); break; case 1: DrawWeekly(); break; case 2: DrawGear(); break; default: DrawUnlocks(); break; }
+        ImGui.EndChild();
+        ImGui.Separator();
+        ImGui.TextColored(Muted, $"7.56  ·  {(settings ? "Préférences" : "Progression locale")}  ·  {snapshot.ObservedAt.ToLocalTime():HH:mm:ss}");
+    }
+
+    private void DrawHeader()
+    {
+        var s = ImGui.GetFontSize() / 17;
+        var p = ImGui.GetCursorScreenPos();
+        var width = ImGui.GetContentRegionAvail().X;
+        var toolsWidth = 4*25*s + 3*3*s;
+        var draw = ImGui.GetWindowDrawList();
+        draw.AddRectFilled(p + new Vector2(0, 3*s), p + new Vector2(3*s, 32*s), ImGui.GetColorU32(Accent), 1*s);
+        draw.AddText(ImGui.GetFont(), 12*s, p + new Vector2(12*s, 0), ImGui.GetColorU32(Muted), "AETHER COMPASS");
+        draw.AddText(p + new Vector2(12*s, 16*s), ImGui.GetColorU32(Accent), snapshot is null ? "Ta prochaine étape" : $"{snapshot.Job} {snapshot.Level}  ·  i{snapshot.AverageItemLevel?.ToString() ?? "?"}");
+        ImGui.InvisibleButton("Glisser le panneau", new Vector2(Math.Max(40*s, width-toolsWidth-8*s), 36*s));
+        if (ImGui.IsItemActive() && !config.Locked && ImGui.IsMouseDragging(ImGuiMouseButton.Left)) ImGui.SetWindowPos(ImGui.GetWindowPos() + ImGui.GetIO().MouseDelta);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(config.Locked ? "Position verrouillée" : "Glisser pour déplacer");
+        ImGui.SetCursorScreenPos(p + new Vector2(width-toolsWidth, 4*s));
+        if (CompassTheme.Tool("Replier", folded ? "expand" : "fold", 25*s, folded))
+        {
+            if (!folded) expandedSize = ImGui.GetWindowSize(); else restoreSize = true;
+            folded = !folded;
+        }
+        ImGui.SameLine(0, 3*s);
+        if (CompassTheme.Tool("Verrouiller la position", config.Locked ? "locked" : "unlock", 25*s, config.Locked)) { config.Locked = !config.Locked; save(); }
+        ImGui.SameLine(0, 3*s);
+        if (CompassTheme.Tool("Préférences", "settings", 25*s, settings)) { settings = !settings; Expand(); }
+        ImGui.SameLine(0, 3*s);
+        if (CompassTheme.Tool("Fermer", "close", 25*s)) IsOpen = false;
+        ImGui.SetCursorScreenPos(p + new Vector2(0, 42*s));
+        headerHeight = 42*s + ImGui.GetStyle().WindowPadding.Y*2;
+        if (!folded) { ImGui.Separator(); ImGui.Spacing(); }
     }
 
     private void DrawGoals()
@@ -78,24 +136,45 @@ public sealed class MainWindow : Window
         ImGui.Spacing();
         if (plan!.Recommendations.Count == 0) ImGui.TextWrapped("Aucun objectif disponible dans ce profil. Vérifie les prérequis et les préférences ci-dessous.");
         var rank = 0;
-        foreach (var goal in plan.Recommendations)
+        foreach (var goal in plan.Recommendations.Take(showAllGoals ? int.MaxValue : 6))
         {
             ImGui.PushID(goal.Objective.Id);
-            ImGui.TextColored(Accent, $"{++rank:00}"); ImGui.SameLine();
-            ImGui.TextWrapped(goal.Objective.Title);
-            ImGui.TextColored(goal.Status == ObjectiveStatus.NeedsVerification ? Amber : Muted,
-                $"{StatusLabel(goal.Status)} · environ {goal.Objective.Minutes} min{(goal.Objective.RewardItemLevel is { } il ? $" · récompense i{il}" : "")}");
-            ImGui.TextWrapped(goal.Objective.Description);
-            foreach (var reason in goal.Reasons) ImGui.TextWrapped($"• {reason}");
-            foreach (var blocker in goal.Blockers) ColoredWrapped(Amber, blocker);
-            if (ImGui.CollapsingHeader("Détails et suivi"))
+            var s = ImGui.GetFontSize()/17;
+            var p = ImGui.GetCursorScreenPos();
+            var width = ImGui.GetContentRegionAvail().X;
+            var titleWidth = width - 97*s;
+            var titleHeight = ImGui.CalcTextSize(goal.Objective.Title, false, titleWidth).Y;
+            var height = Math.Max(54*s, titleHeight+33*s);
+            var selected = expandedGoal == goal.Objective.Id;
+            if (ImGui.InvisibleButton("Voir cet objectif", new Vector2(width, height))) expandedGoal = selected ? null : goal.Objective.Id;
+            var hover = ImGui.IsItemHovered();
+            var draw = ImGui.GetWindowDrawList();
+            draw.AddRectFilled(p, p + new Vector2(width,height-3*s), ImGui.GetColorU32(new Vector4(.12f,.15f,.16f, selected ? .85f : hover ? .65f : .30f)), 2*s);
+            draw.AddRectFilled(p, p + new Vector2(2*s,height-3*s), ImGui.GetColorU32(goal.Status == ObjectiveStatus.NeedsVerification ? Amber with { W=.65f } : Accent with { W=.65f }));
+            draw.AddText(p+new Vector2(10*s,10*s), ImGui.GetColorU32(Accent), $"{++rank:00}");
+            draw.AddText(ImGui.GetFont(), ImGui.GetFontSize(), p+new Vector2(40*s,8*s), ImGui.GetColorU32(ImGuiCol.Text), goal.Objective.Title, titleWidth);
+            var duration = $"{goal.Objective.Minutes}m";
+            draw.AddText(p+new Vector2(width-ImGui.CalcTextSize(duration).X-10*s,10*s), ImGui.GetColorU32(Muted), duration);
+            var meta = $"{StatusLabel(goal.Status)}{(goal.Objective.RewardItemLevel is { } il ? $"  ·  i{il}" : "")}  ·  {(selected ? "replier" : "détails")}";
+            draw.AddText(ImGui.GetFont(), 13*s, p+new Vector2(40*s,titleHeight+13*s), ImGui.GetColorU32(goal.Status == ObjectiveStatus.NeedsVerification ? Amber : Muted), meta);
+            if (expandedGoal == goal.Objective.Id)
             {
+                ImGui.Indent(12*s);
+                ImGui.TextWrapped(goal.Objective.Description);
+                foreach (var reason in goal.Reasons) ColoredWrapped(Muted, $"• {reason}");
+                foreach (var blocker in goal.Blockers) ColoredWrapped(Amber, blocker);
                 DrawActivityControls(goal);
-                ImGui.TextWrapped($"Référence : patch {goal.Objective.Patch}, vérifié le {goal.Objective.VerifiedDate:dd/MM/yyyy}.");
-                foreach (var source in goal.Objective.SourceUrls) ImGui.TextWrapped(source);
+                if (ImGui.TreeNode("Sources"))
+                {
+                    ImGui.TextWrapped($"Patch {goal.Objective.Patch} · vérifié le {goal.Objective.VerifiedDate:dd/MM/yyyy}.");
+                    foreach (var source in goal.Objective.SourceUrls) ImGui.TextWrapped(source);
+                    ImGui.TreePop();
+                }
+                ImGui.Unindent(12*s);
             }
-            ImGui.Spacing(); ImGui.Separator(); ImGui.Spacing(); ImGui.PopID();
+            ImGui.Spacing(); ImGui.PopID();
         }
+        if (plan.Recommendations.Count > 6 && ImGui.SmallButton(showAllGoals ? "Réduire à 6 priorités" : $"Voir les {plan.Recommendations.Count-6} autres pistes")) showAllGoals = !showAllGoals;
         if (ImGui.CollapsingHeader($"Prérequis et objectifs écartés ({plan.Blocked.Count})"))
         {
             foreach (var goal in plan.Blocked)
@@ -114,7 +193,7 @@ public sealed class MainWindow : Window
 
     private void DrawWeekly()
     {
-        ImGui.Spacing(); ImGui.TextWrapped("Le butin et la récompense de complétion sont suivis séparément. Une donnée inconnue ne signifie pas que l'activité reste à faire.");
+        ImGui.Spacing(); ColoredWrapped(Muted, "Butin et pièce d'échange séparés. Inconnu signifie : à vérifier.");
         foreach (var goal in AllGoals().Where(x => x.Objective.Cadence == ResetCadence.Weekly).OrderBy(x => x.Objective.Id).ToArray())
         {
             ImGui.PushID(goal.Objective.Id);
@@ -123,7 +202,8 @@ public sealed class MainWindow : Window
                 state == KnowledgeState.Yes ? "FAIT" : state == KnowledgeState.No ? "À FAIRE" : "INCONNU");
             ImGui.SameLine(); ImGui.TextWrapped(goal.Objective.Title);
             var live = goal.CompletionSource == CompletionProvenance.Observed;
-            ImGui.TextColored(Muted, live ? "Source : jeu" : goal.CompletionSource == CompletionProvenance.Manual && state != KnowledgeState.Unknown ? "Source : déclaration manuelle" : "Source : non vérifiée pour cette semaine");
+            if (live || goal.CompletionSource == CompletionProvenance.Manual && state != KnowledgeState.Unknown)
+                ImGui.TextColored(Muted, live ? "Lu en jeu" : "Déclaration manuelle");
             foreach (var blocker in goal.Blockers) ImGui.TextWrapped(blocker);
             DrawActivityControls(goal);
             ImGui.Separator(); ImGui.PopID();
@@ -140,20 +220,20 @@ public sealed class MainWindow : Window
         }
         if (goal.Objective.Id == "mnemonics-cap")
         {
-            ImGui.TextWrapped("Le plafond dépend du compteur d'acquisition en jeu ; dépenser des mémoquartz ne le remet pas à zéro.");
+            ColoredWrapped(Muted, "Compteur du jeu. Dépenser ne remet pas le plafond à zéro.");
             return;
         }
         if (goal.CompletionSource == CompletionProvenance.Observed)
         {
-            ImGui.TextColored(Muted, "État lu en jeu : le suivi se met à jour automatiquement.");
+            ImGui.TextColored(Muted, "Suivi automatique.");
             return;
         }
-        if (ImGui.SmallButton("Déclarer fait")) { progress!.Complete(goal.Objective.Id, DateTimeOffset.UtcNow); Changed(); }
+        if (ImGui.SmallButton("Fait")) { progress!.Complete(goal.Objective.Id, DateTimeOffset.UtcNow); Changed(); }
         ImGui.SameLine();
         if (ImGui.SmallButton("À faire")) { progress!.SetIncomplete(goal.Objective.Id, DateTimeOffset.UtcNow); Changed(); }
         ImGui.SameLine();
-        if (ImGui.SmallButton("Effacer ma déclaration")) { progress!.ClearCompletion(goal.Objective.Id); Changed(); }
-        ImGui.TextColored(Muted, "La lecture du jeu est prioritaire lorsqu'elle est disponible.");
+        if (ImGui.SmallButton("Effacer")) { progress!.ClearCompletion(goal.Objective.Id); Changed(); }
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip("Effacer la déclaration manuelle. Une lecture connue du jeu reste prioritaire.");
     }
 
     private void DrawGear()
@@ -230,12 +310,18 @@ public sealed class MainWindow : Window
 
     private void DrawDataNotes()
     {
-        foreach (var warning in plan!.DataWarnings) ImGui.TextWrapped($"• {warning}");
+        foreach (var warning in plan?.DataWarnings ?? Array.Empty<string>()) ImGui.TextWrapped($"• {warning}");
         if (readError is not null) ImGui.TextWrapped(readError);
         ImGui.TextWrapped("Un changement de zone peut rendre certaines données temporairement indisponibles. Aucune supposition n'est faite sur les quêtes ou les weekly des autres joueurs.");
     }
 
     private void Changed() { save(); Replan(); }
+    private static string StageLabel(ProgressStage stage) => stage switch
+    {
+        ProgressStage.Fresh100 => "NOUVEAU NIVEAU 100", ProgressStage.CatchUp => "RATTRAPAGE",
+        ProgressStage.Endgame => "FIN DE JEU", ProgressStage.Advanced => "PROGRESSION AVANCÉE",
+        ProgressStage.Leveling => "ÉPOPÉE & NIVEAUX", ProgressStage.NonCombat => "JOB NON COMBATTANT", _ => "À VÉRIFIER"
+    };
     private static void ColoredWrapped(Vector4 color, string text) { ImGui.PushTextWrapPos(0); ImGui.TextColored(color, text); ImGui.PopTextWrapPos(); }
     private static string StatusLabel(ObjectiveStatus status) => status switch { ObjectiveStatus.Available => "Accessible", ObjectiveStatus.NeedsVerification => "À vérifier", ObjectiveStatus.Completed => "Terminé", _ => "Prérequis" };
     private static string FriendlyKey(string key) => key switch

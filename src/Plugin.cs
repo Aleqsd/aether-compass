@@ -13,6 +13,7 @@ public sealed class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
     public Preferences Preferences { get; set; } = new();
+    public bool Locked { get; set; }
 }
 
 public sealed class Plugin : IDalamudPlugin
@@ -61,7 +62,7 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     private void OnCommand(string command, string args) { window.RequestWeekly = args.Trim().Equals("weekly", StringComparison.OrdinalIgnoreCase); Open(); }
-    private void Open() => window.IsOpen = true;
+    private void Open() { window.Expand(); window.IsOpen = true; }
     private void Draw() => windows.Draw();
     private void Update(IFramework framework)
     {

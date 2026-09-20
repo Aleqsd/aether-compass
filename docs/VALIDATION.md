@@ -10,7 +10,9 @@ Le 20 septembre 2026, compilation Release contre les bibliothèques officielles 
 
 Les sorties du script `build.ps1` sont la preuve reproductible. Les aperçus de `tools/Preview` rendent les listes de dessin ImGui du véritable panneau avec des données fictives ; ils ne sont pas des captures FFXIV.
 
-Quatre aperçus inspectés : objectifs niveau 100 i762, suivi hebdomadaire inconnu, personnage déconnecté et largeur minimale 590 à 150 %. Aucun débordement horizontal constaté ; le défilement vertical conserve l'accès aux objectifs suivants.
+Six aperçus inspectés : objectifs niveau 100 i762, suivi hebdomadaire inconnu, personnage déconnecté, largeur minimale 520 à 150 %, objectif déplié et en-tête replié. Aucun débordement horizontal constaté ; le défilement vertical conserve l'accès aux objectifs suivants.
+
+Le harnais simule aussi les clics ImGui : ouverture d'une ligne, verrouillage avec sauvegarde, repli, restauration de la hauteur précédente et fermeture lorsque le panneau est à la fois verrouillé et replié. Ces interactions passent hors jeu. Le panneau utilise un en-tête personnalisé et un thème inspiré de LMeter.
 
 ```powershell
 dotnet build tools/Preview/Preview.csproj -c Release "-p:DalamudHome=<dossier Dalamud>"
